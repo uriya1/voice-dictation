@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.voicedictation.hotkey</string>
+    <key>CFBundleName</key>
+    <string>VoiceDictation</string>
+    <key>CFBundleDisplayName</key>
+    <string>Voice Dictation</string>
+    <key>CFBundleExecutable</key>
+    <string>hotkey</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Voice Dictation needs microphone access to record your speech for transcription.</string>
+</dict>
+</plist>
