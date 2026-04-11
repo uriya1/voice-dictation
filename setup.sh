@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -26,16 +26,7 @@ else
     echo "✓ whisper-cpp installed"
 fi
 
-# ---- Step 3: Check ffmpeg ----
-if command -v ffmpeg &>/dev/null; then
-    echo "✓ ffmpeg found"
-else
-    echo "→ Installing ffmpeg..."
-    brew install ffmpeg
-    echo "✓ ffmpeg installed"
-fi
-
-# ---- Step 4: Download Whisper model ----
+# ---- Step 3: Download Whisper model ----
 MODEL_FILE="ggml-large-v3-turbo-q5_0.bin"
 MODEL_PATH="$SCRIPT_DIR/models/$MODEL_FILE"
 
@@ -63,42 +54,25 @@ else
         echo "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_FILE"
         exit 1
     fi
+
+    # Verify model is not truncated (should be > 500MB)
+    FILE_SIZE=$(stat -f%z "$MODEL_PATH" 2>/dev/null || stat --printf="%s" "$MODEL_PATH" 2>/dev/null || echo "0")
+    if [[ "$FILE_SIZE" -lt 500000000 ]]; then
+        echo "⚠ WARNING: Model file seems too small ($(( FILE_SIZE / 1048576 ))MB)."
+        echo "  It may be corrupted. Re-run setup or download manually."
+    fi
 fi
 
-# ---- Step 5: Detect audio input device ----
-echo ""
-echo "→ Detecting audio input devices..."
-echo ""
-
-# List audio input devices
-DEVICE_LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
-
-# Show audio input section
-echo "$DEVICE_LIST" | grep -A 50 "audio devices" | head -20
-echo ""
-
-# Try to auto-detect built-in microphone
-AUDIO_IDX=$(echo "$DEVICE_LIST" \
-    | grep -i "macbook\|built-in\|internal\|microphone" \
-    | grep -oE '\[[0-9]+\]' | tr -d '[]' | head -1)
-
-if [[ -z "$AUDIO_IDX" ]]; then
-    AUDIO_IDX="0"
-    echo "⚠ Could not auto-detect microphone, defaulting to device :0"
-    echo "  Edit config.sh AUDIO_DEVICE if this is wrong."
-else
-    echo "✓ Detected microphone at index :$AUDIO_IDX"
+# ---- Step 4: Write config.sh ----
+# Back up existing config.sh if present
+if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
+    cp "$SCRIPT_DIR/config.sh" "$SCRIPT_DIR/config.sh.bak"
+    echo "  (existing config.sh backed up to config.sh.bak)"
 fi
 
-AUDIO_DEVICE=":${AUDIO_IDX}"
-
-# ---- Step 6: Write config.sh ----
 cat > "$SCRIPT_DIR/config.sh" << EOF
 # Voice Dictation Configuration
 # Edit this file to change settings. Restart the hotkey process after changes.
-
-# Hotkey mode: "hold" = hold key to record, "double_tap" = tap twice to toggle
-HOTKEY_MODE="hold"
 
 # Key codes (common ones):
 #   96  = F5 (mic key)
@@ -110,43 +84,40 @@ HOTKEY_MODE="hold"
 #   61  = Right Option
 #   55  = Left Command
 #   54  = Right Command
-HOTKEY_KEYCODE=96
-
-# Audio input device (from ffmpeg avfoundation)
-AUDIO_DEVICE="${AUDIO_DEVICE}"
+HOTKEY_KEYCODE=61
 
 # Whisper model path
 MODEL_PATH="${MODEL_PATH}"
 
-# Language for transcription ("he" = Hebrew, "en" = English, "auto" = auto-detect)
-LANGUAGE="he"
-
 # Script directory (auto-generated)
 SCRIPT_DIR="${SCRIPT_DIR}"
-
-# Double-tap window in seconds (only used in double_tap mode)
-DOUBLE_TAP_WINDOW=0.4
 EOF
 
 echo "✓ Config written to config.sh"
 
-# ---- Step 7: Compile Swift binary ----
+# ---- Step 5: Compile Swift binary ----
 echo ""
 echo "→ Compiling hotkey listener..."
 swiftc "$SCRIPT_DIR/hotkey.swift" \
     -framework Carbon \
     -framework Cocoa \
-    -o "$SCRIPT_DIR/hotkey" \
-    -suppress-warnings
+    -framework AVFoundation \
+    -o "$SCRIPT_DIR/hotkey"
 
-echo "✓ Compiled successfully"
+# Also compile into the app bundle
+if [[ -d "$SCRIPT_DIR/VoiceDictation.app/Contents/MacOS" ]]; then
+    cp "$SCRIPT_DIR/hotkey" "$SCRIPT_DIR/VoiceDictation.app/Contents/MacOS/hotkey"
+    echo "✓ Compiled successfully (root + app bundle)"
+else
+    echo "✓ Compiled successfully"
+fi
 
-# ---- Step 8: Set permissions ----
+# ---- Step 6: Set permissions ----
 chmod +x "$SCRIPT_DIR/transcribe.sh"
 chmod +x "$SCRIPT_DIR/hotkey"
 echo "✓ Permissions set"
 
-# ---- Step 9: Create LaunchAgent ----
+# ---- Step 7: Create LaunchAgent ----
 PLIST_PATH="$HOME/Library/LaunchAgents/com.voicedictation.hotkey.plist"
 
 cat > "$PLIST_PATH" << EOF
@@ -172,30 +143,30 @@ cat > "$PLIST_PATH" << EOF
 </plist>
 EOF
 
-# Unload if already loaded, then load
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load "$PLIST_PATH"
+# Unload if already loaded, then load (use modern API)
+DOMAIN_TARGET="gui/$(id -u)"
+launchctl bootout "$DOMAIN_TARGET/com.voicedictation.hotkey" 2>/dev/null || true
+launchctl bootstrap "$DOMAIN_TARGET" "$PLIST_PATH"
 
 echo "✓ LaunchAgent created and loaded (auto-starts on login)"
 
-# ---- Step 10: Print instructions ----
+# ---- Step 8: Print instructions ----
 echo ""
 echo "================================================"
 echo "  Setup Complete!"
 echo "================================================"
 echo ""
-echo "  Hotkey:    Hold F5 (mic key) to record, release to transcribe"
-echo "  Language:  Hebrew (change in config.sh)"
+echo "  Hotkey:    Right Option (hold to record, tap to toggle)"
 echo "  Model:     large-v3-turbo (547MB, local)"
 echo ""
-echo "  ⚠ REQUIRED — Grant permissions:"
+echo "  REQUIRED — Grant permissions:"
 echo ""
 echo "  1. Input Monitoring (for hotkey to work):"
-echo "     System Settings → Privacy & Security → Input Monitoring"
+echo "     System Settings > Privacy & Security > Input Monitoring"
 echo "     Click + and add: ${SCRIPT_DIR}/hotkey"
 echo ""
 echo "  2. Accessibility (for paste to work):"
-echo "     System Settings → Privacy & Security → Accessibility"
+echo "     System Settings > Privacy & Security > Accessibility"
 echo "     Click + and add: ${SCRIPT_DIR}/hotkey"
 echo ""
 echo "  3. Microphone — will be auto-prompted on first recording"
@@ -203,12 +174,7 @@ echo ""
 echo "  To test manually:  ${SCRIPT_DIR}/hotkey"
 echo "  To view logs:      cat ${SCRIPT_DIR}/hotkey.log"
 echo "  To restart:        launchctl kickstart -k gui/\$(id -u)/com.voicedictation.hotkey"
-echo "  To stop:           launchctl unload ${PLIST_PATH}"
+echo "  To stop:           launchctl bootout gui/\$(id -u)/com.voicedictation.hotkey"
 echo ""
-echo "  To change hotkey:  Edit HOTKEY_MODE and HOTKEY_KEYCODE in config.sh"
-echo "                     Then restart the service."
-echo ""
-echo "  Tip: If F5 triggers macOS Dictation instead, either:"
-echo "    - Disable macOS Dictation in System Settings → Keyboard → Dictation"
-echo "    - Or change HOTKEY_KEYCODE in config.sh to another key (e.g., 59 for Left Ctrl)"
+echo "  Change the hotkey from the menu bar icon, or edit HOTKEY_KEYCODE in config.sh."
 echo ""

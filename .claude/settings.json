@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkill -f \"hotkey\")",
+      "Bash(pkill -f \"VoiceDictation\")",
+      "Bash(swiftc hotkey.swift -framework Carbon -framework Cocoa -framework AVFoundation -o hotkey)",
+      "Bash(swiftc hotkey.swift -framework Carbon -framework Cocoa -framework AVFoundation -o VoiceDictation.app/Contents/MacOS/hotkey)"
+    ]
+  }
+}

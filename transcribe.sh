@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Load config
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -15,15 +15,19 @@ fi
 
 # Helper: run whisper with a given language and clean output
 run_whisper() {
+    local lang="$1"
+    # pipefail is set globally; whisper-cli failures will propagate.
+    # Use || true to allow empty output without triggering set -e.
     whisper-cli \
         --model "$MODEL_PATH" \
-        --language "$1" \
+        --language "$lang" \
         --no-timestamps \
         "$AUDIO" 2>/dev/null \
       | sed 's/^[[:space:]]*//' \
       | sed '/^$/d' \
       | tr '\n' ' ' \
-      | sed 's/[[:space:]]*$//'
+      | sed 's/[[:space:]]*$//' \
+      || true
 }
 
 # Check if text contains non-Hebrew/English characters (Chinese, Japanese, Korean, Arabic, etc.)
@@ -69,8 +73,11 @@ printf '%s' "$TEXT" | pbcopy
 
 # Paste is handled by the Swift binary via CGEvent (more reliable across apps)
 
-# Notification
-osascript -e "display notification \"${TEXT:0:80}\" with title \"Voice Dictation\""
+# Notification — use heredoc to avoid shell/AppleScript injection from transcribed text
+NOTIFICATION_TEXT="${TEXT:0:80}"
+osascript <<APPLESCRIPT
+display notification "$( printf '%s' "$NOTIFICATION_TEXT" | sed 's/[\\\"]/\\&/g' )" with title "Voice Dictation"
+APPLESCRIPT
 
 # Done sound
 afplay /System/Library/Sounds/Glass.aiff &

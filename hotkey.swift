@@ -2,12 +2,21 @@ import Cocoa
 import Carbon
 import AVFoundation
 
+// MARK: - Constants
+
+private let kRecordingPath = "/tmp/vd_recording.wav"
+private let kMinRecordingBytes: UInt64 = 1000
+private let kHoldThreshold: CFAbsoluteTime = 0.3  // seconds — press shorter than this enters toggle mode
+private let kPasteToEnterDelay: useconds_t = 500_000  // 500ms — let paste render before Enter
+private let kCancelIconResetDelay: TimeInterval = 1.0
+private let kKeycodeV: UInt16 = 0x09
+private let kKeycodeReturn: UInt16 = 0x24
+private let kKeycodeLeftArrow: UInt16 = 123
+
 // MARK: - Configuration
 
 struct Config {
-    var hotkeyMode: String = "hold"       // "hold" or "double_tap"
     var hotkeyKeycode: UInt16 = 96        // 96=F5, 59=Left Ctrl, 58=Left Option, 61=Right Option
-    var audioDevice: String = ":0"
     var scriptDir: String = ""
 }
 
@@ -43,9 +52,7 @@ func loadConfig() -> Config {
         value = value.replacingOccurrences(of: "$HOME", with: NSHomeDirectory())
 
         switch key {
-        case "HOTKEY_MODE": config.hotkeyMode = value
         case "HOTKEY_KEYCODE": config.hotkeyKeycode = UInt16(value) ?? 96
-        case "AUDIO_DEVICE": config.audioDevice = value
         case "SCRIPT_DIR": config.scriptDir = value
         default: break
         }
@@ -81,13 +88,12 @@ nonisolated(unsafe) var config = Config()
 nonisolated(unsafe) var isRecording = false
 nonisolated(unsafe) var recordingStartTime: CFAbsoluteTime = 0
 nonisolated(unsafe) var audioRecorder: AVAudioRecorder?
-nonisolated(unsafe) var lastTapTime: CFAbsoluteTime = 0
 nonisolated(unsafe) var hotkeyPressTime: CFAbsoluteTime = 0
 nonisolated(unsafe) var isToggleRecording = false // true = started by tap, ignore release
-nonisolated(unsafe) var doubleTapWindow: TimeInterval = 0.4
 nonisolated(unsafe) var appDelegate: AppDelegate?
 nonisolated(unsafe) var isPaused = false
 nonisolated(unsafe) var waitingForHotkey = false
+nonisolated(unsafe) var eventTap: CFMachPort?
 
 // MARK: - Audio Feedback
 
@@ -104,19 +110,19 @@ func playSound(_ name: String) {
 
 func simulatePaste() {
     let src = CGEventSource(stateID: .hidSystemState)
-    let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)
+    let keyDown = CGEvent(keyboardEventSource: src, virtualKey: kKeycodeV, keyDown: true)
     keyDown?.flags = .maskCommand
     keyDown?.post(tap: .cghidEventTap)
-    let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: false)
+    let keyUp = CGEvent(keyboardEventSource: src, virtualKey: kKeycodeV, keyDown: false)
     keyUp?.flags = .maskCommand
     keyUp?.post(tap: .cghidEventTap)
 }
 
 func simulateEnter() {
     let src = CGEventSource(stateID: .hidSystemState)
-    let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true) // 0x24 = Return
+    let keyDown = CGEvent(keyboardEventSource: src, virtualKey: kKeycodeReturn, keyDown: true)
     keyDown?.post(tap: .cghidEventTap)
-    let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false)
+    let keyUp = CGEvent(keyboardEventSource: src, virtualKey: kKeycodeReturn, keyDown: false)
     keyUp?.post(tap: .cghidEventTap)
 }
 
@@ -262,7 +268,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let displayName = matched?.0 ?? name
 
         // Update or add "Current: ..." item
-        let customItems = hotkeyMenu.items.filter { $0.action == #selector(selectHotkey(_:)) }
         let isPreset = AppDelegate.hotkeyOptions.contains { $0.1 == keycode }
         // Remove old custom entry if it exists
         if let existing = hotkeyMenu.items.first(where: { $0.title.hasPrefix("Custom:") }) {
@@ -284,6 +289,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if isRecording {
+            audioRecorder?.stop()
+            audioRecorder = nil
+            try? FileManager.default.removeItem(at: recordingURL)
+        }
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
     }
 
     // MARK: - Status Updates
@@ -328,7 +344,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Recording (using AVAudioRecorder)
 
-let recordingURL = URL(fileURLWithPath: "/tmp/vd_recording.wav")
+let recordingURL = URL(fileURLWithPath: kRecordingPath)
 
 func startRecording() {
     guard !isRecording, !isPaused else { return }
@@ -349,11 +365,11 @@ func startRecording() {
         audioRecorder?.record()
         isRecording = true
         recordingStartTime = CFAbsoluteTimeGetCurrent()
-        print("🎙 Recording started...")
+        print("Recording started...")
         appDelegate?.setStatus("Recording...", symbolName: "mic.circle.fill", tint: .red, customIcon: "icon-recording.png")
         playSound("Tink")
     } catch {
-        print("❌ Failed to start recording: \(error)")
+        print("Failed to start recording: \(error)")
     }
 }
 
@@ -361,15 +377,15 @@ func stopRecordingAndTranscribe() {
     guard isRecording else { return }
     isRecording = false
     let duration = CFAbsoluteTimeGetCurrent() - recordingStartTime
-    print("⏹ Recording stopped after \(String(format: "%.2f", duration))s, transcribing...")
+    print("Recording stopped after \(String(format: "%.2f", duration))s, transcribing...")
 
     audioRecorder?.stop()
     audioRecorder = nil
 
     let attrs = try? FileManager.default.attributesOfItem(atPath: recordingURL.path)
     let fileSize = attrs?[.size] as? UInt64 ?? 0
-    if fileSize < 1000 {
-        print("⚠️ Recording too short or empty (\(fileSize) bytes).")
+    if fileSize < kMinRecordingBytes {
+        print("Recording too short or empty (\(fileSize) bytes).")
         appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         return
     }
@@ -378,25 +394,39 @@ func stopRecordingAndTranscribe() {
     appDelegate?.setStatus("Transcribing...", symbolName: "ellipsis.circle", customIcon: "icon-transcribing.png")
     playSound("Pop")
 
+    // Capture values on the main thread before dispatching to background
+    let scriptDir = config.scriptDir
+    let autoEnter = UserDefaults.standard.bool(forKey: "autoEnter")
+
     DispatchQueue.global(qos: .userInitiated).async {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/bash")
-        proc.arguments = ["\(config.scriptDir)/transcribe.sh"]
+        proc.arguments = ["\(scriptDir)/transcribe.sh"]
         proc.environment = ProcessInfo.processInfo.environment
-        try? proc.run()
-        proc.waitUntilExit()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            print("Failed to run transcribe.sh: \(error)")
+            appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+            return
+        }
+
+        if proc.terminationStatus != 0 {
+            print("transcribe.sh exited with status \(proc.terminationStatus)")
+        }
 
         // Paste from clipboard
         simulatePaste()
 
         // Auto-Enter if enabled
-        if UserDefaults.standard.bool(forKey: "autoEnter") {
-            usleep(500_000) // 500ms delay to let paste render (WhatsApp is slow)
+        if autoEnter {
+            usleep(kPasteToEnterDelay) // let paste render (WhatsApp is slow)
             simulateEnter()
         }
 
         appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
-        print("✅ Transcription complete")
+        print("Transcription complete")
     }
 }
 
@@ -408,9 +438,9 @@ func cancelRecording() {
     try? FileManager.default.removeItem(at: recordingURL)
     appDelegate?.setStatus("Cancelled", symbolName: "xmark.circle")
     playSound("Basso")
-    print("❌ Recording cancelled")
+    print("Recording cancelled")
     // Reset icon after a moment
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + kCancelIconResetDelay) {
         if !isRecording {
             appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         }
@@ -441,7 +471,7 @@ func keycodeName(_ keycode: UInt16) -> String {
 let eventCallback: CGEventTapCallBack = { proxy, type, event, userInfo in
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        if let tap = userInfo?.assumingMemoryBound(to: CFMachPort.self).pointee {
+        if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: true)
         }
         return Unmanaged.passRetained(event)
@@ -465,8 +495,8 @@ let eventCallback: CGEventTapCallBack = { proxy, type, event, userInfo in
         return Unmanaged.passRetained(event)
     }
 
-    // Cancel recording: Left Arrow (keycode 123) while recording
-    if isRecording && type == .keyDown && keycode == 123 {
+    // Cancel recording: Left Arrow while recording
+    if isRecording && type == .keyDown && keycode == kKeycodeLeftArrow {
         cancelRecording()
         isToggleRecording = false
         return nil
@@ -475,7 +505,7 @@ let eventCallback: CGEventTapCallBack = { proxy, type, event, userInfo in
     // Unified hotkey logic — auto-detects hold vs tap:
     //   Hold > 300ms then release → hold-to-record (stops on release)
     //   Quick tap < 300ms → toggle mode (tap again to stop)
-    let holdThreshold: CFAbsoluteTime = 0.3
+    let holdThreshold = kHoldThreshold
 
     guard keycode == config.hotkeyKeycode else {
         return Unmanaged.passRetained(event)
@@ -534,17 +564,17 @@ let eventCallback: CGEventTapCallBack = { proxy, type, event, userInfo in
 
 func main() {
     config = loadConfig()
-    print("Voice Dictation — Listening for hotkey (mode: \(config.hotkeyMode), keycode: \(config.hotkeyKeycode))")
+    print("Voice Dictation — Listening for hotkey (keycode: \(config.hotkeyKeycode))")
     print("Press Ctrl+C to quit\n")
 
     // Request microphone permission
     let semaphore = DispatchSemaphore(value: 0)
     AVCaptureDevice.requestAccess(for: .audio) { granted in
         if granted {
-            print("✓ Microphone access granted")
+            print("[ok] Microphone access granted")
         } else {
-            print("⚠️ Microphone access DENIED — recording won't work!")
-            print("  System Settings → Privacy & Security → Microphone → enable Voice Dictation")
+            print("[warning] Microphone access DENIED — recording won't work!")
+            print("  System Settings > Privacy & Security > Microphone > enable Voice Dictation")
         }
         semaphore.signal()
     }
@@ -553,9 +583,9 @@ func main() {
     // Request accessibility permission
     let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
     if AXIsProcessTrustedWithOptions(options) {
-        print("✓ Accessibility access granted")
+        print("[ok] Accessibility access granted")
     } else {
-        print("⚠️ Accessibility access needed — paste won't work until granted.")
+        print("[warning] Accessibility access needed — paste won't work until granted.")
     }
 
     // Set up event tap — listen for all event types so hotkey can be changed at runtime
@@ -578,8 +608,7 @@ func main() {
         exit(1)
     }
 
-    let tapPtr = UnsafeMutablePointer<CFMachPort>.allocate(capacity: 1)
-    tapPtr.initialize(to: tap)
+    eventTap = tap
 
     CGEvent.tapEnable(tap: tap, enable: false)
     let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)

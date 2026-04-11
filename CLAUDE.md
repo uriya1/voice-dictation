@@ -9,8 +9,11 @@ A macOS voice dictation tool that uses a global hotkey to record audio, transcri
 ## Build & Run
 
 ```bash
-# Compile the hotkey daemon (only needed after editing hotkey.swift)
-swiftc hotkey.swift -framework Carbon -framework Cocoa -o hotkey -suppress-warnings
+# Compile the hotkey binary (only needed after editing hotkey.swift)
+swiftc hotkey.swift -framework Carbon -framework Cocoa -framework AVFoundation -o hotkey
+
+# Copy into app bundle too
+cp hotkey VoiceDictation.app/Contents/MacOS/hotkey
 
 # Restart the LaunchAgent service
 launchctl kickstart -k gui/$(id -u)/com.voicedictation.hotkey
@@ -25,22 +28,23 @@ Config changes in `config.sh` take effect on service restart without recompilati
 
 The system has two runtime components connected by process spawning:
 
-**`hotkey.swift` → compiled `hotkey` binary** — A persistent daemon (LaunchAgent) that:
-- Parses `config.sh` key=value pairs at startup
+**`hotkey.swift` -> compiled `hotkey` binary** — A persistent daemon (LaunchAgent) that:
+- Parses `config.sh` key=value pairs at startup (only `HOTKEY_KEYCODE` and `SCRIPT_DIR`)
 - Creates a system-wide CGEvent tap (Carbon/Cocoa) to intercept the configured hotkey
-- On hotkey activation: spawns `ffmpeg` to record from `avfoundation` device to `/tmp/vd_recording.wav`
-- On hotkey release: sends SIGINT to ffmpeg, then asynchronously calls `transcribe.sh`
+- Records audio via `AVAudioRecorder` (16kHz, mono, 16-bit PCM) to `/tmp/vd_recording.wav`
+- On hotkey release or second tap: stops recording, spawns `transcribe.sh`, then injects Cmd+V via CGEvent
+- Runs as a menu bar app (`NSApplication` with `.accessory` policy) with status icons and hotkey picker
 
 **`transcribe.sh`** — Post-recording pipeline that:
-- Runs `whisper-cli` on the recorded WAV
-- Copies result to clipboard (`pbcopy`) and pastes into active app (`osascript`)
-- Shows a macOS notification and plays an audio confirmation
+- Runs `whisper-cli` with auto language detection, retries with Hebrew then English on failure
+- Copies the transcribed text to clipboard via `pbcopy`
+- Shows a macOS notification (paste is handled by the Swift binary)
 
-**`config.sh`** — Shared configuration sourced by bash and parsed line-by-line by Swift. Key settings: `HOTKEY_MODE` (hold/double_tap), `HOTKEY_KEYCODE`, `AUDIO_DEVICE`, `MODEL_PATH`, `LANGUAGE`.
+**`config.sh`** — Shared configuration sourced by bash and parsed line-by-line by Swift. Key settings: `HOTKEY_KEYCODE`, `MODEL_PATH`, `SCRIPT_DIR`.
 
 ## Dependencies
 
-Homebrew: `ffmpeg`, `whisper-cpp` (provides `whisper-cli`). Xcode CLT for `swiftc`. Whisper model at `models/ggml-large-v3-turbo-q5_0.bin` (symlink to HuggingFace cache).
+Homebrew: `whisper-cpp` (provides `whisper-cli`). Xcode CLT for `swiftc`. Whisper model at `models/ggml-large-v3-turbo-q5_0.bin`.
 
 ## macOS Permissions Required
 
