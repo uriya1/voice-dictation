@@ -94,6 +94,7 @@ nonisolated(unsafe) var appDelegate: AppDelegate?
 nonisolated(unsafe) var isPaused = false
 nonisolated(unsafe) var waitingForHotkey = false
 nonisolated(unsafe) var eventTap: CFMachPort?
+nonisolated(unsafe) var sourceApp: NSRunningApplication?  // app that was active when recording started
 
 // MARK: - Audio Feedback
 
@@ -365,7 +366,8 @@ func startRecording() {
         audioRecorder?.record()
         isRecording = true
         recordingStartTime = CFAbsoluteTimeGetCurrent()
-        print("Recording started...")
+        sourceApp = NSWorkspace.shared.frontmostApplication
+        print("Recording started (source: \(sourceApp?.localizedName ?? "unknown"))...")
         appDelegate?.setStatus("Recording...", symbolName: "mic.circle.fill", tint: .red, customIcon: "icon-recording.png")
         playSound("Tink")
     } catch {
@@ -397,6 +399,7 @@ func stopRecordingAndTranscribe() {
     // Capture values on the main thread before dispatching to background
     let scriptDir = config.scriptDir
     let autoEnter = UserDefaults.standard.bool(forKey: "autoEnter")
+    let targetApp = sourceApp
 
     DispatchQueue.global(qos: .userInitiated).async {
         let proc = Process()
@@ -414,6 +417,12 @@ func stopRecordingAndTranscribe() {
 
         if proc.terminationStatus != 0 {
             print("transcribe.sh exited with status \(proc.terminationStatus)")
+        }
+
+        // Restore focus to the app that was active when recording started
+        if let app = targetApp, !app.isTerminated {
+            app.activate()
+            usleep(100_000) // 100ms — let the app come to foreground
         }
 
         // Paste from clipboard
