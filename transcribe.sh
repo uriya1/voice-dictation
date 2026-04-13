@@ -13,11 +13,12 @@ if [[ ! -f "$AUDIO" || ! -s "$AUDIO" ]]; then
     exit 0
 fi
 
+# Parse LANGUAGE from config into an array of language codes
+IFS=',' read -ra LANG_CODES <<< "${LANGUAGE:-auto}"
+
 # Helper: run whisper with a given language and clean output
 run_whisper() {
     local lang="$1"
-    # pipefail is set globally; whisper-cli failures will propagate.
-    # Use || true to allow empty output without triggering set -e.
     whisper-cli \
         --model "$MODEL_PATH" \
         --language "$lang" \
@@ -30,33 +31,90 @@ run_whisper() {
       || true
 }
 
-# Check if text contains non-Hebrew/English characters (Chinese, Japanese, Korean, Arabic, etc.)
-has_unexpected_chars() {
-    python3 -c "
+# Check if text contains only characters from the expected language scripts.
+# Returns 0 (match) if all letter characters belong to acceptable scripts.
+# Returns 1 (mismatch) if unexpected scripts are found.
+text_matches_languages() {
+    local text="$1"
+    shift
+    local langs=("$@")
+    python3 - "$text" "${langs[@]}" << 'PYEOF'
 import sys, unicodedata
-text = sys.argv[1]
-for ch in text:
-    cat = unicodedata.category(ch)
-    if cat.startswith('L'):
-        name = unicodedata.name(ch, '')
-        if not any(x in name for x in ['LATIN', 'HEBREW']):
-            sys.exit(0)  # found unexpected
-sys.exit(1)  # all OK
-" "$1"
+
+SCRIPT_SIGS = {
+    'en': ['LATIN'],
+    'es': ['LATIN'],
+    'fr': ['LATIN'],
+    'de': ['LATIN'],
+    'pt': ['LATIN'],
+    'he': ['HEBREW'],
+    'ar': ['ARABIC'],
+    'zh': ['CJK'],
+    'ja': ['HIRAGANA', 'KATAKANA', 'CJK'],
+    'ko': ['HANGUL'],
+    'hi': ['DEVANAGARI'],
+    'ru': ['CYRILLIC'],
 }
 
-# First pass: auto-detect language
-TEXT=$(run_whisper "auto")
+text = sys.argv[1]
+langs = sys.argv[2:]
 
-# If result contains unexpected characters (Chinese etc.), retry with Hebrew
-if [[ -n "$TEXT" ]] && has_unexpected_chars "$TEXT"; then
-    echo "Detected non-Hebrew/English text, retrying with Hebrew..."
-    TEXT=$(run_whisper "he")
-fi
+# Build set of acceptable Unicode script signatures
+acceptable = set()
+for lang in langs:
+    for sig in SCRIPT_SIGS.get(lang, []):
+        acceptable.add(sig)
 
-# If still empty, try English explicitly
-if [[ -z "$TEXT" ]]; then
-    TEXT=$(run_whisper "en")
+# If no mappings found, accept everything
+if not acceptable:
+    sys.exit(0)
+
+ALL_SIGS = ['LATIN', 'HEBREW', 'ARABIC', 'CJK', 'HIRAGANA', 'KATAKANA',
+            'HANGUL', 'DEVANAGARI', 'CYRILLIC']
+
+for ch in text:
+    if unicodedata.category(ch).startswith('L'):
+        name = unicodedata.name(ch, '')
+        for sig in ALL_SIGS:
+            if sig in name:
+                if sig not in acceptable:
+                    sys.exit(1)  # unexpected script found
+                break
+
+sys.exit(0)  # all letter chars are in acceptable scripts
+PYEOF
+}
+
+# ---- Transcription strategy ----
+
+NUM_LANGS=${#LANG_CODES[@]}
+FIRST_LANG="${LANG_CODES[0]}"
+
+if [[ "$FIRST_LANG" == "auto" ]]; then
+    # Auto mode: single pass with whisper auto-detect
+    TEXT=$(run_whisper "auto")
+
+elif [[ "$NUM_LANGS" -eq 1 ]]; then
+    # Single specific language: pass directly to whisper
+    TEXT=$(run_whisper "$FIRST_LANG")
+
+else
+    # Multiple languages selected:
+    # Step 1 — run whisper auto to get a raw candidate
+    TEXT=$(run_whisper "auto")
+
+    # Step 2 — validate against selected languages' scripts
+    if [[ -n "$TEXT" ]] && ! text_matches_languages "$TEXT" "${LANG_CODES[@]}"; then
+        echo "Script mismatch detected, retrying with selected languages..."
+        TEXT=""
+        for lang in "${LANG_CODES[@]}"; do
+            ATTEMPT=$(run_whisper "$lang")
+            if [[ -n "$ATTEMPT" ]] && text_matches_languages "$ATTEMPT" "$lang"; then
+                TEXT="$ATTEMPT"
+                break
+            fi
+        done
+    fi
 fi
 
 # Guard: skip if nothing was transcribed

@@ -13,11 +13,28 @@ private let kKeycodeV: UInt16 = 0x09
 private let kKeycodeReturn: UInt16 = 0x24
 private let kKeycodeLeftArrow: UInt16 = 123
 
+private let kLanguageOptions: [(code: String, label: String)] = [
+    ("auto", "Auto"),
+    ("en",   "English"),
+    ("he",   "Hebrew"),
+    ("es",   "Spanish"),
+    ("fr",   "French"),
+    ("de",   "German"),
+    ("zh",   "Chinese"),
+    ("ja",   "Japanese"),
+    ("ko",   "Korean"),
+    ("ar",   "Arabic"),
+    ("hi",   "Hindi"),
+    ("pt",   "Portuguese"),
+    ("ru",   "Russian"),
+]
+
 // MARK: - Configuration
 
 struct Config {
     var hotkeyKeycode: UInt16 = 96        // 96=F5, 59=Left Ctrl, 58=Left Option, 61=Right Option
     var scriptDir: String = ""
+    var languages: [String] = ["auto"]
 }
 
 func loadConfig() -> Config {
@@ -54,6 +71,11 @@ func loadConfig() -> Config {
         switch key {
         case "HOTKEY_KEYCODE": config.hotkeyKeycode = UInt16(value) ?? 96
         case "SCRIPT_DIR": config.scriptDir = value
+        case "LANGUAGE":
+            let langs = value.split(separator: ",")
+                .map { String($0).trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            config.languages = langs.isEmpty ? ["auto"] : langs
         default: break
         }
     }
@@ -135,6 +157,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var autoEnterMenuItem: NSMenuItem!
     var pauseMenuItem: NSMenuItem!
     var hotkeyMenu: NSMenu!
+    var languageMenu: NSMenu!
 
     // Available hotkey options: (display name, keycode)
     static let hotkeyOptions: [(String, UInt16)] = [
@@ -191,6 +214,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeyItem.submenu = hotkeyMenu
         menu.addItem(hotkeyItem)
+
+        // Language submenu (multi-select)
+        let languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        languageMenu = NSMenu()
+        for (index, lang) in kLanguageOptions.enumerated() {
+            let item = NSMenuItem(title: lang.label, action: #selector(selectLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = config.languages.contains(lang.code) ? .on : .off
+            languageMenu.addItem(item)
+            if index == 0 {
+                languageMenu.addItem(NSMenuItem.separator())
+            }
+        }
+        languageItem.submenu = languageMenu
+        menu.addItem(languageItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -286,6 +325,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         saveConfigValue("HOTKEY_KEYCODE", value: "\(keycode)")
         setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         print("Hotkey changed to: \(displayName) (keycode \(keycode))")
+    }
+
+    @objc func selectLanguage(_ sender: NSMenuItem) {
+        let code = kLanguageOptions[sender.tag].code
+
+        if code == "auto" {
+            config.languages = ["auto"]
+        } else {
+            if config.languages.contains(code) {
+                config.languages.removeAll { $0 == code }
+                if config.languages.isEmpty {
+                    config.languages = ["auto"]
+                }
+            } else {
+                config.languages.removeAll { $0 == "auto" }
+                config.languages.append(code)
+            }
+        }
+
+        updateLanguageCheckmarks()
+        let encoded = config.languages.joined(separator: ",")
+        saveConfigValue("LANGUAGE", value: "\"\(encoded)\"")
+        print("Language set to: \(encoded)")
+    }
+
+    func updateLanguageCheckmarks() {
+        for item in languageMenu.items {
+            guard item.tag >= 0, item.tag < kLanguageOptions.count, !item.isSeparatorItem else { continue }
+            item.state = config.languages.contains(kLanguageOptions[item.tag].code) ? .on : .off
+        }
     }
 
     @objc func quitApp() {
@@ -589,13 +658,16 @@ func main() {
     }
     semaphore.wait()
 
-    // Request accessibility permission
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-    if AXIsProcessTrustedWithOptions(options) {
+    // Check accessibility permission (silent — don't show the system prompt on every launch)
+    if AXIsProcessTrusted() {
         print("[ok] Accessibility access granted")
     } else {
         print("[warning] Accessibility access needed — paste won't work until granted.")
+        print("  System Settings > Privacy & Security > Accessibility > add this binary")
     }
+
+    // Brief pause after permission prompts to avoid racing with macOS granting
+    usleep(500_000)
 
     // Set up event tap — listen for all event types so hotkey can be changed at runtime
     let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
@@ -614,6 +686,8 @@ func main() {
         print("Please grant Input Monitoring permission:")
         print("  System Settings > Privacy & Security > Input Monitoring")
         print("  Add the 'hotkey' binary to the list.")
+        // Sleep before exit so KeepAlive LaunchAgent doesn't crash-loop
+        sleep(30)
         exit(1)
     }
 

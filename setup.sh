@@ -86,6 +86,10 @@ cat > "$SCRIPT_DIR/config.sh" << EOF
 #   54  = Right Command
 HOTKEY_KEYCODE=61
 
+# Language for transcription (comma-separated codes, or "auto" for all)
+# e.g. LANGUAGE="he,en" or LANGUAGE="auto"
+LANGUAGE="auto"
+
 # Whisper model path
 MODEL_PATH="${MODEL_PATH}"
 
