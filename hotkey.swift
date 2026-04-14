@@ -484,8 +484,14 @@ func stopRecordingAndTranscribe() {
             return
         }
 
+        // Exit 2 = no text transcribed — skip paste to avoid pasting stale clipboard
         if proc.terminationStatus != 0 {
             print("transcribe.sh exited with status \(proc.terminationStatus)")
+            if proc.terminationStatus == 2 {
+                print("No transcription produced, skipping paste")
+                appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+                return
+            }
         }
 
         // Restore focus to the app that was active when recording started

@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# Ensure Homebrew binaries are on PATH and UTF-8 encoding for clipboard
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export LANG="${LANG:-en_US.UTF-8}"
+
 # Load config
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
@@ -103,13 +107,14 @@ else
     # Step 1 — run whisper auto to get a raw candidate
     TEXT=$(run_whisper "auto")
 
-    # Step 2 — validate against selected languages' scripts
-    if [[ -n "$TEXT" ]] && ! text_matches_languages "$TEXT" "${LANG_CODES[@]}"; then
-        echo "Script mismatch detected, retrying with selected languages..."
+    # Step 2 — if empty or script mismatch, retry with each selected language
+    if [[ -z "$TEXT" ]] || ! text_matches_languages "$TEXT" "${LANG_CODES[@]}"; then
+        [[ -n "$TEXT" ]] && echo "Script mismatch detected, retrying with selected languages..."
+        [[ -z "$TEXT" ]] && echo "Auto returned empty, trying selected languages..."
         TEXT=""
         for lang in "${LANG_CODES[@]}"; do
             ATTEMPT=$(run_whisper "$lang")
-            if [[ -n "$ATTEMPT" ]] && text_matches_languages "$ATTEMPT" "$lang"; then
+            if [[ -n "$ATTEMPT" ]]; then
                 TEXT="$ATTEMPT"
                 break
             fi
@@ -117,11 +122,11 @@ else
     fi
 fi
 
-# Guard: skip if nothing was transcribed
+# Guard: skip if nothing was transcribed (exit 2 = no text, tells Swift to skip paste)
 if [[ -z "$TEXT" ]]; then
     echo "No text transcribed."
     afplay /System/Library/Sounds/Basso.aiff &
-    exit 0
+    exit 2
 fi
 
 echo "Transcribed: $TEXT"

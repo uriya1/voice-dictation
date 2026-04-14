@@ -1,28 +1,12 @@
 # Voice Dictation for macOS
 
-A local, privacy-first voice dictation tool for macOS. Hold a hotkey, speak, and your words are transcribed and pasted into any app — all processing happens on your Mac, nothing is sent to the cloud.
+A local, privacy-first voice dictation tool for macOS. Hold a hotkey, speak, and your words are transcribed and pasted into any app. All processing happens on your Mac, nothing is sent to the cloud.
 
 ![macOS](https://img.shields.io/badge/macOS-13%2B-blue) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-supported-green) ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-## Features
+## Quick Setup
 
-- **Hold or tap** a hotkey to record — auto-detects hold-to-record vs toggle mode
-- **Local transcription** using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — no internet required
-- **Auto-paste** into the active app using CGEvent (works with WhatsApp, Slack, browsers, etc.)
-- **Auto-Enter** option to send messages automatically after paste
-- **Menu bar icon** with status indicator (idle, recording, transcribing, paused)
-- **Custom icons** — drop your own PNGs in the Resources folder
-- **Hebrew + English** auto-detection with fallback protection
-- **Cancel recording** mid-way by pressing Left Arrow
-- **Hotkey picker** — choose from presets or press any key to set a custom hotkey
-
-## Requirements
-
-- macOS 13+ (Ventura or later)
-- Apple Silicon or Intel Mac
-- [Homebrew](https://brew.sh)
-
-## Installation
+Clone the repo and run one script. That's it.
 
 ```bash
 git clone https://github.com/uriya1/voice-dictation.git
@@ -30,15 +14,9 @@ cd voice-dictation
 bash setup.sh
 ```
 
-The setup script will:
-1. Install `whisper-cpp` via Homebrew
-2. Download the Whisper model (~547MB, one-time)
-3. Compile the Swift binary
-4. Set up a LaunchAgent for auto-start on login
+The setup script installs dependencies, downloads the Whisper model (~547MB, one-time), compiles the binary, and sets up auto-start on login.
 
-### Grant Permissions
-
-After setup, macOS will prompt for these permissions (System Settings > Privacy & Security):
+After setup, grant these permissions in System Settings > Privacy & Security:
 
 | Permission | Why |
 |---|---|
@@ -46,30 +24,48 @@ After setup, macOS will prompt for these permissions (System Settings > Privacy 
 | **Accessibility** | Paste text into apps |
 | **Microphone** | Record your voice |
 
+## Features
+
+- **Hold or tap** a hotkey to record, with auto-detection of hold vs toggle mode
+- **Local transcription** using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), no internet required
+- **Multiple languages** with auto-detection and per-language fallback
+- **Auto-paste** into the active app via CGEvent (works with WhatsApp, Slack, browsers, etc.)
+- **Auto-Enter** option to send messages automatically after paste
+- **Menu bar icon** with status indicator (idle, recording, transcribing, paused)
+- **Custom icons** - drop your own PNGs in the Resources folder
+- **Cancel recording** mid-way by pressing Left Arrow
+- **Hotkey picker** - choose from presets or press any key to set a custom hotkey
+
+## Requirements
+
+- macOS 13+ (Ventura or later)
+- Apple Silicon or Intel Mac
+- [Homebrew](https://brew.sh)
+
 ## Usage
 
 **Hold** the hotkey (default: Right Option) and speak, then release to transcribe and paste.
 
-**Quick tap** the hotkey to start a longer recording — tap again to stop.
+**Quick tap** the hotkey to start a longer recording. Tap again to stop.
 
 **Left Arrow** while recording to cancel.
 
 ### Menu Bar
 
 Click the menu bar icon to:
-- Set **Language** — Auto (all languages), or pick specific ones (multi-select)
-- Toggle **Auto-Enter** (sends Enter after paste — great for chat apps)
+- Set **Language** - Auto (all languages), or pick specific ones (multi-select)
+- Toggle **Auto-Enter** (sends Enter after paste, great for chat apps)
 - **Pause/Resume** the hotkey listener
 - Change the **Hotkey** (presets or custom key)
 - **Quit** the app
 
 ### Language Selection
 
-By default, language is set to **Auto** — Whisper auto-detects from all supported languages.
+By default, language is set to **Auto**, which lets Whisper auto-detect from all supported languages.
 
 You can select specific languages from the **Language** submenu (multi-select):
-- Selecting **Hebrew** + **English** means only those two languages will be used for transcription
-- Selecting **Auto** clears all specific selections and uses full auto-detection
+- Selecting **Hebrew** + **English** means only those two will be used for transcription
+- Selecting **Auto** clears all specific selections and goes back to full auto-detection
 - Supported: English, Hebrew, Spanish, French, German, Chinese, Japanese, Korean, Arabic, Hindi, Portuguese, Russian
 
 ### Running
@@ -112,11 +108,11 @@ Recommended size: 36x36 px (retina) with transparent background.
 ## Architecture
 
 ```
-hotkey.swift          → Swift binary: hotkey listener, audio recorder, menu bar UI
-transcribe.sh         → Bash: runs whisper-cli, copies to clipboard, shows notification
-config.sh             → Shared config (parsed by both Swift and Bash)
-setup.sh              → One-time setup: install deps, compile, configure LaunchAgent
-VoiceDictation.app/   → macOS app bundle (for permissions + menu bar)
+hotkey.swift          Swift binary: hotkey listener, audio recorder, menu bar UI
+transcribe.sh         Bash: runs whisper-cli, copies to clipboard, shows notification
+config.sh             Shared config (parsed by both Swift and Bash)
+setup.sh              One-time setup: install deps, compile, configure LaunchAgent
+VoiceDictation.app/   macOS app bundle (for permissions + menu bar)
 ```
 
 ## License
