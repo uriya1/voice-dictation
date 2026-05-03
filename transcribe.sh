@@ -122,6 +122,28 @@ else
     fi
 fi
 
+# Strip invisible Unicode characters (zero-width spaces, BOM, etc.)
+# Whisper occasionally inserts these and they break clipboard managers.
+TEXT=$(printf '%s' "$TEXT" | python3 -c "
+import sys
+text = sys.stdin.read()
+for ch in ['​', '‌', '‍', '﻿', ' ']:
+    text = text.replace(ch, '')
+sys.stdout.write(text)
+")
+
+# Filter common Whisper hallucinations (phrases it invents when recording silence)
+# Trim whitespace for comparison
+TRIMMED=$(printf '%s' "$TEXT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+case "$TRIMMED" in
+    "Thank you."|"Thanks for watching!"|"Thanks for watching."|"Thank you for watching."|"[Music]"|"[music]"|"(music)"|"[BLANK_AUDIO]"|\
+    "תודה שצפיתם"|"תודה שצפיתם."|"תודה רבה."|"תודה רבה"|"תודה."|"תודה"|\
+    "you"|"You."|"."|",")
+        echo "Filtered hallucination: '$TRIMMED'"
+        TEXT=""
+        ;;
+esac
+
 # Guard: skip if nothing was transcribed (exit 2 = no text, tells Swift to skip paste)
 if [[ -z "$TEXT" ]]; then
     echo "No text transcribed."
@@ -136,7 +158,7 @@ printf '%s' "$TEXT" | pbcopy
 
 # Paste is handled by the Swift binary via CGEvent (more reliable across apps)
 
-# Notification — use heredoc to avoid shell/AppleScript injection from transcribed text
+# Notification: use heredoc to avoid shell/AppleScript injection from transcribed text
 NOTIFICATION_TEXT="${TEXT:0:80}"
 osascript <<APPLESCRIPT
 display notification "$( printf '%s' "$NOTIFICATION_TEXT" | sed 's/[\\\"]/\\&/g' )" with title "Voice Dictation"

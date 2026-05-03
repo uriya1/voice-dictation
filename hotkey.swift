@@ -181,7 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Build menu
         let menu = NSMenu()
 
-        statusMenuItem = NSMenuItem(title: "Idle — Ready", action: nil, keyEquivalent: "")
+        statusMenuItem = NSMenuItem(title: "Idle, Ready", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
@@ -266,13 +266,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if isPaused {
             setStatus("Paused", symbolName: "mic.slash.fill", customIcon: "icon-paused.png")
         } else {
-            setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+            setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         }
         print("Voice Dictation: \(isPaused ? "PAUSED" : "ENABLED")")
     }
 
     func updatePauseMenuItem() {
-        pauseMenuItem.title = isPaused ? "Disabled — Click to Enable" : "Enabled — Click to Disable"
+        pauseMenuItem.title = isPaused ? "Disabled, click to Enable" : "Enabled, click to Disable"
         pauseMenuItem.state = isPaused ? .off : .on
     }
 
@@ -323,7 +323,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         saveConfigValue("HOTKEY_KEYCODE", value: "\(keycode)")
-        setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+        setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         print("Hotkey changed to: \(displayName) (keycode \(keycode))")
     }
 
@@ -457,7 +457,7 @@ func stopRecordingAndTranscribe() {
     let fileSize = attrs?[.size] as? UInt64 ?? 0
     if fileSize < kMinRecordingBytes {
         print("Recording too short or empty (\(fileSize) bytes).")
-        appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+        appDelegate?.setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         return
     }
     print("   Recorded \(fileSize / 1024) KB audio")
@@ -480,7 +480,7 @@ func stopRecordingAndTranscribe() {
             proc.waitUntilExit()
         } catch {
             print("Failed to run transcribe.sh: \(error)")
-            appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+            appDelegate?.setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
             return
         }
 
@@ -489,7 +489,7 @@ func stopRecordingAndTranscribe() {
             print("transcribe.sh exited with status \(proc.terminationStatus)")
             if proc.terminationStatus == 2 {
                 print("No transcription produced, skipping paste")
-                appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+                appDelegate?.setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
                 return
             }
         }
@@ -509,7 +509,7 @@ func stopRecordingAndTranscribe() {
             simulateEnter()
         }
 
-        appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+        appDelegate?.setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         print("Transcription complete")
     }
 }
@@ -526,7 +526,7 @@ func cancelRecording() {
     // Reset icon after a moment
     DispatchQueue.main.asyncAfter(deadline: .now() + kCancelIconResetDelay) {
         if !isRecording {
-            appDelegate?.setStatus("Idle — Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
+            appDelegate?.setStatus("Idle, Ready", symbolName: "mic.fill", customIcon: "icon-idle.png")
         }
     }
 }
